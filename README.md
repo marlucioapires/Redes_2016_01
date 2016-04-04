@@ -4,4 +4,6 @@ pelo IF Sudeste MG - campus Barbacena.
 
 Autor: Marlúcio Alves Pires.
 
-Data: 04/04/2016
+Semestre: primeiro semestre de 2016.
+
+Prof.: Rafael Alencar
