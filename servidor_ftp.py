@@ -45,11 +45,34 @@ class ConexaoFTP():
 				# Something else happened, handle error, exit, etc.
 				print e
 				break
-		print '[' + reply + ']'
-		return reply
+		print '[' + reply.strip() + ']'
+		return reply.strip()
 
 	def msg(self, mensagem):
 		self.conn.send(str(mensagem) + '\n')
+
+	def processa_comando(self, comando):
+		try:
+			#print comando.split(' ')[0]
+			funcao = getattr(self, comando.split(' ')[0].upper())
+			funcao(comando)
+		except Exception, e:
+			print 'ERROR:', e
+			self.msg('500 Comando não reconhecido.\n')
+
+	def USER(self, comando):
+		lista = comando.split(' ')
+		if len(lista) > 1:
+			if lista[1] == 'anonymous':
+				mensagem = '331 Usuário anonymous ok. Informe o seu e-mail completo como a sua senha.\n'
+			else:
+				mensagem = '331 Informe a senha para o usuário %s.\n' % lista[1]
+		else:
+			mensagem = '501 Erro de sintaxe no comando USER. Parâmetro inválido.\n'
+		self.msg(mensagem)
+
+	def QUIT(self, comando):
+		self.msg('221 Adeus.\n')
 
 def main():
 	sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -58,8 +81,17 @@ def main():
 	sock.listen(1)
 	while True:
 		ftp = ConexaoFTP(sock.accept())
-		dados = ftp.le_comando()
-		print dados
+		ftp.msg('220 Bem-vindo ao servidor FTP!\n')
+		while True:
+			comando = ftp.le_comando()
+			if not comando:
+				break
+			else:
+				print 'Recebido:', comando
+				ftp.processa_comando(comando)
+			if comando.split(' ')[0].upper() == 'QUIT':
+				break
+			comando = ''
 		ftp.encerra()
 
 if __name__=='__main__':
