@@ -5,7 +5,6 @@ import socket
 
 allow_delete = False
 local_ip = socket.gethostbyname(socket.gethostname())
-local_ip = ''
 local_port = 8888
 currdir = os.path.abspath('.')
 print currdir
@@ -20,6 +19,8 @@ class ConexaoFTP():
 		self.basewd = currdir
 		self.cwd = self.basewd
 		self.pasv_mode = False
+		self.logged = False
+		print 'Conectado ao cliente (IP): %s' % str(addr)
 
 	def encerra(self):
 		self.conn.close()
@@ -61,6 +62,7 @@ class ConexaoFTP():
 			self.msg('500 Comando não reconhecido.\n')
 
 	def USER(self, comando):
+		# Falta implementar!
 		lista = comando.split(' ')
 		if len(lista) > 1:
 			if lista[1] == 'anonymous':
@@ -71,15 +73,33 @@ class ConexaoFTP():
 			mensagem = '501 Erro de sintaxe no comando USER. Parâmetro inválido.\n'
 		self.msg(mensagem)
 
+	def PASS(self,cmd):
+		# Falta implementar!
+		self.msg('230 Senha OK.\n')
+		self.logged = True
+
+	def PASV(self,cmd):
+		if self.logged:
+			self.pasv_mode = True
+			self.servsock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+			self.servsock.bind((local_ip, 0)) # Requisita uma porta livre do S.O.
+			self.servsock.listen(1)
+			ip, porta_dados = self.servsock.getsockname()
+			print 'Conexão de dados aberta', ip, porta_dados
+			self.conn.send('227 Entrando em modo passivo (%s,%u,%u).\n' %
+				(','.join(ip.split('.')), porta_dados>>8&0xFF, porta_dados&0xFF))
+
 	def QUIT(self, comando):
 		self.msg('221 Adeus.\n')
 
 def main():
 	sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 	sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-	sock.bind((local_ip, local_port))
+	print 'IP: %s, porta: %u' % (local_ip, local_port)
+	sock.bind(('', local_port))
 	sock.listen(1)
 	while True:
+		print 'Aguardando conexão...'
 		ftp = ConexaoFTP(sock.accept())
 		ftp.msg('220 Bem-vindo ao servidor FTP!\n')
 		while True:
