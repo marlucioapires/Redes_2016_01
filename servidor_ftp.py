@@ -40,6 +40,7 @@ class ConexaoFTP():
 		self.sock_dados = None
 		self.conn_dados = None
 		self.esta_ativo = True
+		self.user = None
 		print 'Conectado ao cliente (IP): %s\n' % str(addr)
 
 	def ativo(self):
@@ -116,15 +117,18 @@ class ConexaoFTP():
 			self.pasv_mode = False
 
 	def USER(self, comando):
-		# Falta implementar!
-		lista = comando.split(' ')
-		if len(lista) > 1:
-			if lista[1] == 'anonymous':
-				mensagem = '331 Usuário anonymous ok. Informe o seu e-mail completo como a sua senha.'
+		if not self.logged:
+			lista = comando.split(' ')
+			if len(lista) > 1:
+				self.user = lista[1]
+				if self.user == 'anonymous':
+					mensagem = '331 Usuário anonymous ok. Informe o seu e-mail completo como a sua senha.'
+				else:
+					mensagem = '331 Informe a senha para o usuário %s.' % self.user
 			else:
-				mensagem = '331 Informe a senha para o usuário %s.' % lista[1]
+				mensagem = '501 Parâmetro inválido. Sintaxe: USER <username>'
 		else:
-			mensagem = '501 Erro de sintaxe no comando USER. Parâmetro inválido.'
+			mensagem = '500 Sequência errada de comandos.'
 		self.msg(mensagem)
 
 	def PASS(self, comando):
