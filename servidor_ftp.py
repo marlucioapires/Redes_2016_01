@@ -53,7 +53,8 @@ class ConexaoFTP():
 				# this next if/else is a bit redundant, but illustrates how the
 				# timeout exception is setup
 				if err == 'timed out':
-					print 'Tempo de leitura (' + str(self.timeout) + ' segundos) do socket expirado!'
+					print 'Tempo de espera (' + str(self.timeout) + ' segundos) do socket expirado!'
+					self.msg('421 Tempo de espera (' + str(self.timeout) + ' segundos) expirado. Conexão de controle encerrada.')
 					break
 				else:
 					print e
@@ -69,7 +70,6 @@ class ConexaoFTP():
 		self.conn.send(str(mensagem) + '\r\n')
 
 	def enviar_dados(self, dados):
-		print 'ENTROU NO ENVIA_DADOS'
 		self.conn_dados.send(str(dados) + '\r\n')	
 
 	def processa_comando(self, comando):
@@ -169,21 +169,53 @@ class ConexaoFTP():
 				mensagem = '250 Comando %s OK.' % comando
 			else:
 				if pathname[0] == '/':
-					diretorio = os.path.join(self.basewd, pathname[1:])
+					diretorio = os.path.abspath(os.path.join(self.basewd, pathname[1:]))
 				else:
-					diretorio = os.path.join(self.cwd, pathname)
+					diretorio = os.path.abspath(os.path.join(self.cwd, pathname))
 				if os.path.isdir(diretorio): # Verifica se é um diretório válido.
-					if os.path.abspath(diretorio).find(self.basewd) != 0: # Verifica se está acessando diretório acima do raiz.
-						self.cwd = self.basewd
-					else:
+					# A seguir, verifica-se se está acessando diretório acima do raiz.
+					if diretorio.find(self.basewd) == 0:
 						self.cwd = diretorio
+					else:
+						self.cwd = self.basewd
 					mensagem = '250 Comando %s OK.' % comando
 				else:
 					mensagem = '550 %s: Diretório não localizado.' % pathname
 		else:
 			# Parâmetro inválido. Enviar mensagem de erro.
 			mensagem = 'Parâmetro inválido.'
-			pass
+		self.msg(mensagem)
+
+	def MKD(self, comando):
+		pathname = extrai_parametro(comando)
+		if pathname:
+			caminho = pathname
+			diretorio = pathname
+			nome_dir = ''
+			if pathname != '/':
+				if pathname[0] == '/':
+					diretorio = os.path.abspath(os.path.join(self.basewd, pathname[1:]))
+				else:
+					diretorio = os.path.abspath(os.path.join(self.cwd, pathname))
+				pos = diretorio.rfind('/')
+				caminho = diretorio[:pos]
+				if pos != (len(diretorio) - 1):
+					nome_dir = diretorio[(pos + 1):]
+			if os.path.isdir(caminho) and nome_dir: # Verifica se é um diretório válido.
+				# A seguir, verifica-se se está acessando diretório acima do raiz.
+				if caminho.find(self.basewd) != 0:
+					caminho = self.basewd
+				diretorio = os.path.join(caminho, nome_dir)
+				try:			
+					os.mkdir(diretorio)
+					mensagem = '257 Diretório criado com sucesso.'
+				except Exception, e:
+					mensagem = '550 Falha ao criar diretório \'%s\'' % diretorio
+			else:
+				mensagem = '550 Falha ao criar diretório \'%s\'' % diretorio
+		else:
+			# Parâmetro inválido. Enviar mensagem de erro.
+			mensagem = '501 Parâmetro inválido. Sintaxe: MKD <pathname>'
 		self.msg(mensagem)
 
 	def QUIT(self, comando):
