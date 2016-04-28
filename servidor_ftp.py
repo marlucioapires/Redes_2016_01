@@ -28,7 +28,7 @@ def retira_barra_inicio(caminho):
 	return ''
 
 class ConexaoFTP():
-	def __init__(self, (conn, addr), timeout = 1000):
+	def __init__(self, (conn, addr), timeout = 100000):
 		self.conn = conn
 		self.conn.settimeout(timeout)
 		self.timeout = timeout
@@ -122,9 +122,9 @@ class ConexaoFTP():
 			if len(lista) > 1:
 				self.user = lista[1]
 				if self.user == 'anonymous':
-					mensagem = '331 Usuário anonymous ok. Informe o seu e-mail completo como a sua senha.'
+					mensagem = '331 Usuário "anonymous" OK. Informe o seu e-mail completo como a sua senha.'
 				else:
-					mensagem = '331 Informe a senha para o usuário %s.' % self.user
+					mensagem = '331 Informe a senha para o usuário "%s".' % self.user
 			else:
 				mensagem = '501 Parâmetro inválido. Sintaxe: USER <username>'
 		else:
@@ -197,12 +197,12 @@ class ConexaoFTP():
 		if pathname:
 			if pathname == '/': # Alterar para o diretório raiz.
 				self.cwd = self.basewd
-				mensagem = '250 Comando %s OK.' % comando
+				mensagem = '250 Comando "%s" OK.' % comando
 			else:
 				if self.atualiza_caminho(pathname):
-					mensagem = '250 Comando %s OK.' % comando
+					mensagem = '250 Comando "%s" OK.' % comando
 				else:
-					mensagem = '550 %s: Diretório não localizado.' % pathname
+					mensagem = '550 Diretório "%s" não localizado.' % pathname
 		else:
 			# Parâmetro inválido. Enviar mensagem de erro.
 			mensagem = 'Parâmetro inválido.'
@@ -237,20 +237,20 @@ class ConexaoFTP():
 				caminho_completo = os.path.join(self.cwd, nome_dir)
 				try:
 					os.mkdir(caminho_completo)
-					mensagem = '257 Diretório \"%s\" criado com sucesso.' % self.caminho_relativo(caminho_completo, self.basewd)
+					mensagem = '257 Diretório "%s" criado com sucesso.' % self.caminho_relativo(caminho_completo, self.basewd)
 				except Exception, e:
-					mensagem = '550 Falha ao criar diretório \"%s\"' % self.caminho_relativo(caminho_completo, self.basewd)
+					mensagem = '550 Falha ao criar diretório "%s"' % self.caminho_relativo(caminho_completo, self.basewd)
 				finally:
 					self.cwd = salva_cwd
 			else:
-				mensagem = '550 Falha ao criar diretório \"%s\"' % pathname
+				mensagem = '550 Falha ao criar diretório "%s"' % pathname
 		else:
 			# Parâmetro inválido. Enviar mensagem de erro.
 			mensagem = '501 Parâmetro inválido. Sintaxe: MKD <pathname>'
 		self.msg(mensagem)
 
 	def DELE(self, comando):
-		pathname = extrai_parametro(comando)
+		'''pathname = extrai_parametro(comando)
 		if pathname and pathname[-1] != '/':
 			if pathname[0] == '/':
 				diretorio = os.path.abspath(os.path.join(self.basewd, pathname[1:]))
@@ -276,7 +276,49 @@ class ConexaoFTP():
 			#	mensagem = '550 Falha ao remover arquivo \'%s\'' % diretorio
 		else:
 			# Parâmetro inválido. Enviar mensagem de erro.
-			mensagem = '501 Parâmetro inválido. Sintaxe: DELE <pathname>'
+			mensagem = '501 Parâmetro inválido. Sintaxe: DELE <pathname>'''
+		mensagem = '502 Comando DELE não implementado.'
+		self.msg(mensagem)
+
+	def RETR(self, comando):
+		if self.logged:
+			if self.pasv_mode:
+				pathname = extrai_parametro(comando)
+				if pathname and pathname != '/' and pathname[-1] != '/':
+					pos = pathname.rfind('/')
+					if pos == -1:
+						caminho = ' '
+					elif pos == 0:
+						caminho = '/'
+					else:
+						caminho = pathname[:pos]
+					print 'CAMINHO: [' + caminho + ']'
+					nome_arq = pathname[(pos + 1):]
+					print 'NOME_ARQ: [' + nome_arq + ']'
+					salva_cwd = self.cwd
+					if self.atualiza_caminho(caminho):
+						print 'CAMINHO DO ARQUIVO EXISTE'
+						if os.path.isfile(os.path.join(self.cwd, nome_arq)):
+							arquivo = open(os.path.join(self.cwd, nome_arq), 'r')
+							print 'Downloading:', arquivo
+							self.msg('150 Enviando arquivo.')
+							self.iniciar_conexao_de_dados()
+							dados = arquivo.read(1024)
+							while dados:
+								self.enviar_dados(dados)
+								dados = arquivo.read(1024)
+							arquivo.close()
+							self.fechar_conexao_de_dados()
+							mensagem = '226 Transferência completa.\r\n'
+							self.cwd = salva_cwd
+						else:
+							mensagem = '550 Arquivo "%s" não localizado.' % os.path.join(self.cwd, nome_arq)
+				else:
+					mensagem = '501 Parâmetro inválido. Sintaxe: RETR <pathname>'
+			else:
+				mensagem = '502 Entre modo passivo.'
+		else:
+			mensagem = '530 Realize o login antes (comandos USER e PASS).'
 		self.msg(mensagem)
 
 	def QUIT(self, comando):
