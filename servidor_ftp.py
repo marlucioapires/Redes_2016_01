@@ -18,6 +18,15 @@ def extrai_parametro(comando):
 		parametro = comando[pos:].strip()
 	return parametro
 
+def retira_barra_inicio(caminho):
+	if len(caminho) != 0:
+		if caminho[0] == '/':
+			if len(caminho) > 1:
+				return caminho[1:]
+		else:
+			return caminho
+	return ''
+
 class ConexaoFTP():
 	def __init__(self, (conn, addr), timeout = 1000):
 		self.conn = conn
@@ -161,6 +170,24 @@ class ConexaoFTP():
 			# Usuário deve estar logado! Enviar mensagem de erro.
 			pass
 
+	def atualiza_caminho(self, caminho):
+		if caminho[0] == '/':
+			diretorio_atual = self.basewd
+		else:
+			diretorio_atual = self.cwd
+		for c in caminho.strip().split('/'):
+			diretorio = os.path.abspath(os.path.join(diretorio_atual, c))
+			if os.path.isdir(diretorio): # Verifica se é um diretório válido.
+				# A seguir, verifica-se se está acessando diretório acima do raiz.
+				if diretorio.find(self.basewd) == 0:
+					diretorio_atual = diretorio
+				else:
+					diretorio_atual = self.basewd
+			else:
+				return False
+		self.cwd = diretorio_atual
+		return True
+
 	def CWD(self, comando):
 		pathname = extrai_parametro(comando)
 		if pathname:
@@ -168,16 +195,7 @@ class ConexaoFTP():
 				self.cwd = self.basewd
 				mensagem = '250 Comando %s OK.' % comando
 			else:
-				if pathname[0] == '/':
-					diretorio = os.path.abspath(os.path.join(self.basewd, pathname[1:]))
-				else:
-					diretorio = os.path.abspath(os.path.join(self.cwd, pathname))
-				if os.path.isdir(diretorio): # Verifica se é um diretório válido.
-					# A seguir, verifica-se se está acessando diretório acima do raiz.
-					if diretorio.find(self.basewd) == 0:
-						self.cwd = diretorio
-					else:
-						self.cwd = self.basewd
+				if self.atualiza_caminho(pathname):
 					mensagem = '250 Comando %s OK.' % comando
 				else:
 					mensagem = '550 %s: Diretório não localizado.' % pathname
@@ -186,36 +204,75 @@ class ConexaoFTP():
 			mensagem = 'Parâmetro inválido.'
 		self.msg(mensagem)
 
+	def caminho_relativo(self, caminho, raiz):
+		cwd = os.path.relpath(caminho, raiz)
+		if cwd == '.':
+			cwd = '/'
+		else:
+			cwd = '/' + cwd
+		return cwd
+
+	def PWD(self, comando):
+		self.msg('257 \"%s\"' % self.caminho_relativo(self.cwd, self.basewd))
+
 	def MKD(self, comando):
 		pathname = extrai_parametro(comando)
-		if pathname:
-			caminho = pathname
-			diretorio = pathname
-			nome_dir = ''
-			if pathname != '/':
-				if pathname[0] == '/':
-					diretorio = os.path.abspath(os.path.join(self.basewd, pathname[1:]))
-				else:
-					diretorio = os.path.abspath(os.path.join(self.cwd, pathname))
-				pos = diretorio.rfind('/')
-				caminho = diretorio[:pos]
-				if pos != (len(diretorio) - 1):
-					nome_dir = diretorio[(pos + 1):]
-			if os.path.isdir(caminho) and nome_dir: # Verifica se é um diretório válido.
-				# A seguir, verifica-se se está acessando diretório acima do raiz.
-				if caminho.find(self.basewd) != 0:
-					caminho = self.basewd
-				diretorio = os.path.join(caminho, nome_dir)
-				try:			
-					os.mkdir(diretorio)
-					mensagem = '257 Diretório criado com sucesso.'
-				except Exception, e:
-					mensagem = '550 Falha ao criar diretório \'%s\'' % diretorio
+		if pathname and pathname != '/':
+			if pathname[-1] == '/':
+				pathname = pathname[:-1]
+			pos = pathname.rfind('/')
+			if pos == -1:
+				caminho = ' '
+			elif pos == 0:
+				caminho = '/'
 			else:
-				mensagem = '550 Falha ao criar diretório \'%s\'' % diretorio
+				caminho = pathname[:pos]
+			nome_dir = pathname[(pos + 1):]
+			salva_cwd = self.cwd
+			if self.atualiza_caminho(caminho):
+				caminho_completo = os.path.join(self.cwd, nome_dir)
+				try:
+					os.mkdir(caminho_completo)
+					mensagem = '257 Diretório \"%s\" criado com sucesso.' % self.caminho_relativo(caminho_completo, self.basewd)
+				except Exception, e:
+					mensagem = '550 Falha ao criar diretório \"%s\"' % self.caminho_relativo(caminho_completo, self.basewd)
+				finally:
+					self.cwd = salva_cwd
+			else:
+				mensagem = '550 Falha ao criar diretório \"%s\"' % pathname
 		else:
 			# Parâmetro inválido. Enviar mensagem de erro.
 			mensagem = '501 Parâmetro inválido. Sintaxe: MKD <pathname>'
+		self.msg(mensagem)
+
+	def DELE(self, comando):
+		pathname = extrai_parametro(comando)
+		if pathname and pathname[-1] != '/':
+			if pathname[0] == '/':
+				diretorio = os.path.abspath(os.path.join(self.basewd, pathname[1:]))
+			else:
+				diretorio = os.path.abspath(os.path.join(self.cwd, pathname))
+			pos = diretorio.rfind('/')
+			caminho = diretorio[:pos]
+			#if pos != (len(diretorio) - 1):
+			nome_arq = diretorio[(pos + 1):]
+			#if os.path.isdir(caminho): # Verifica se é um caminho válido.
+				# A seguir, verifica-se se está acessando diretório acima do raiz.
+			if caminho.find(self.basewd) != 0:
+				caminho = self.basewd
+			print 'CAMINHO:', caminho
+			print 'RAIZ:', self.basewd
+			diretorio = os.path.join(caminho, nome_arq)
+			try:			
+				os.remove(diretorio)
+				mensagem = '250 Arquivo removido com sucesso.'
+			except Exception, e:
+				mensagem = '550 Falha ao remover arquivo \'%s\'' % diretorio
+			#else:
+			#	mensagem = '550 Falha ao remover arquivo \'%s\'' % diretorio
+		else:
+			# Parâmetro inválido. Enviar mensagem de erro.
+			mensagem = '501 Parâmetro inválido. Sintaxe: DELE <pathname>'
 		self.msg(mensagem)
 
 	def QUIT(self, comando):
