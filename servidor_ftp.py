@@ -7,9 +7,16 @@ import time
 allow_delete = False
 local_ip = socket.gethostbyname(socket.gethostname())
 local_port = 8888
-currdir = os.path.abspath('.')
-print currdir
+diretorio_raiz = os.path.abspath('./raiz')
+print diretorio_raiz
 EOL = '\n'
+
+def extrai_parametro(comando):
+	pos = comando.find(' ')
+	parametro = ''
+	if pos != -1:
+		parametro = comando[pos:].strip()
+	return parametro
 
 class ConexaoFTP():
 	def __init__(self, (conn, addr), timeout = 1000):
@@ -17,7 +24,7 @@ class ConexaoFTP():
 		self.conn.settimeout(timeout)
 		self.timeout = timeout
 		self.addr = addr
-		self.basewd = currdir
+		self.basewd = diretorio_raiz
 		self.cwd = self.basewd
 		self.pasv_mode = False
 		self.logged = False
@@ -30,9 +37,7 @@ class ConexaoFTP():
 		return self.esta_ativo
 
 	def encerra(self):
-		if self.pasv_mode:
-			self.fechar_conexao_de_dados()
-			self.sock_dados.close()
+		self.fechar_conexao_de_dados()
 		self.conn.close()
 		self.esta_ativo = False
 
@@ -59,9 +64,6 @@ class ConexaoFTP():
 				break
 		print '[' + reply.strip() + ']'
 		return reply.strip()
-
-	def extrai_parametro():
-		pass
 
 	def msg(self, mensagem):
 		self.conn.send(str(mensagem) + '\r\n')
@@ -95,9 +97,14 @@ class ConexaoFTP():
 			print 'CONEXÃO DE DADOS: Conectado ao cliente (IP): %s' % str(addr)
 
 	def fechar_conexao_de_dados(self):
-		if self.conn_dados:
-			self.conn_dados.close() # Fecha a conexão de dados.
-			self.conn_dados = None
+		if self.pasv_mode:
+			if self.conn_dados:
+				self.conn_dados.close() # Fecha a conexão de dados.
+				self.conn_dados = None
+			if self.sock_dados:
+				self.sock_dados.close() # Fecha a conexão de dados.
+				self.sock_dados = None
+			self.pasv_mode = False
 
 	def USER(self, comando):
 		# Falta implementar!
@@ -111,12 +118,12 @@ class ConexaoFTP():
 			mensagem = '501 Erro de sintaxe no comando USER. Parâmetro inválido.'
 		self.msg(mensagem)
 
-	def PASS(self,cmd):
+	def PASS(self, comando):
 		# Falta implementar!
 		self.msg('230 Senha OK.')
 		self.logged = True
 
-	def PASV(self,cmd):
+	def PASV(self, comando):
 		if self.logged:
 			self.pasv_mode = True
 			porta_dados = self.abrir_conexao_de_dados()
@@ -136,7 +143,7 @@ class ConexaoFTP():
 		ftime = time.strftime(' %b %d %H:%M ', time.gmtime(st.st_mtime))
 		return d + mode + ' 1 user group ' + str(st.st_size) + ftime + os.path.basename(fn)
 
-	def LIST(self,cmd):
+	def LIST(self, comando):
 		if self.logged:
 			if self.pasv_mode:
 				self.msg('150 Enviando listagem de diretório.')
@@ -144,7 +151,7 @@ class ConexaoFTP():
 				self.iniciar_conexao_de_dados()
 				for t in os.listdir(self.cwd):
 					k = self.toListItem(os.path.join(self.cwd, t))
-					self.enviar_dados(k)
+					self.conn_dados.send(k + '\r\n')
 				self.fechar_conexao_de_dados()
 				self.msg('226 Listagem de diretório enviada.')
 			else:
@@ -153,6 +160,31 @@ class ConexaoFTP():
 		else:
 			# Usuário deve estar logado! Enviar mensagem de erro.
 			pass
+
+	def CWD(self, comando):
+		pathname = extrai_parametro(comando)
+		if pathname:
+			if pathname == '/': # Alterar para o diretório raiz.
+				self.cwd = self.basewd
+				mensagem = '250 Comando %s OK.' % comando
+			else:
+				if pathname[0] == '/':
+					diretorio = os.path.join(self.basewd, pathname[1:])
+				else:
+					diretorio = os.path.join(self.cwd, pathname)
+				if os.path.isdir(diretorio): # Verifica se é um diretório válido.
+					if os.path.abspath(diretorio).find(self.basewd) != 0: # Verifica se está acessando diretório acima do raiz.
+						self.cwd = self.basewd
+					else:
+						self.cwd = diretorio
+					mensagem = '250 Comando %s OK.' % comando
+				else:
+					mensagem = '550 %s: Diretório não localizado.' % pathname
+		else:
+			# Parâmetro inválido. Enviar mensagem de erro.
+			mensagem = 'Parâmetro inválido.'
+			pass
+		self.msg(mensagem)
 
 	def QUIT(self, comando):
 		self.msg('221 Adeus.')
