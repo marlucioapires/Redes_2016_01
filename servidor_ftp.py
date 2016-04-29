@@ -1,5 +1,6 @@
 # coding: utf-8
 
+import acesso
 import os
 import shutil
 import socket
@@ -11,6 +12,8 @@ local_port = 8888
 diretorio_raiz = os.path.abspath('./raiz')
 print diretorio_raiz
 EOL = '\n'
+dicionario_usuarios_e_senhas = {}
+chave_publica = None
 
 def extrai_parametro(comando):
 	pos = comando.find(' ')
@@ -65,7 +68,6 @@ class ConexaoFTP():
 				# Something else happened, handle error, exit, etc.
 				print e
 				break
-		print '[' + reply.strip() + ']'
 		return reply.strip()
 
 	def msg(self, mensagem):
@@ -76,11 +78,10 @@ class ConexaoFTP():
 
 	def processa_comando(self, comando):
 		try:
-			#print comando.split(' ')[0]
 			funcao = getattr(self, comando.split(' ')[0].upper())
 			funcao(comando)
 		except Exception, e:
-			print 'ERROR:', e
+			print 'ERRO:', e
 			self.msg('500 Comando não reconhecido.')
 
 	def abrir_conexao_de_dados(self):
@@ -88,7 +89,6 @@ class ConexaoFTP():
 			self.sock_dados = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 			self.sock_dados.bind(('', 0)) # Requisita uma porta livre do S.O.
 			self.sock_dados.listen(1)
-			#ip, porta_dados = self.sock_dados.getsockname()
 			porta_dados = self.sock_dados.getsockname()[1]
 			print 'Conexão de dados aberta:', local_ip, porta_dados
 			return porta_dados
@@ -124,9 +124,27 @@ class ConexaoFTP():
 		self.msg(mensagem)
 
 	def PASS(self, comando):
-		# Falta implementar!
-		self.msg('230 Senha OK.')
-		self.logged = True
+		if not self.logged:
+			if self.user:
+				lista = comando.split(' ')
+				if len(lista) > 1:
+					senha = lista[1]
+					if self.user == 'anonymous':
+						self.logged = True
+					elif dicionario_usuarios_e_senhas.has_key(self.user):
+						if acesso.criptografar_senha(chave_publica, senha) == dicionario_usuarios_e_senhas[self.user]:
+							self.logged = True
+					if self.logged:
+						mensagem = '230 Senha OK. Usuário "%s" logado.' % self.user
+					else:
+						mensagem = '530 Usuário e/ou senha incorretos.'
+				else:
+					mensagem = '501 Parâmetro inválido. Sintaxe: PASS <password>'
+			else:
+				mensagem = '503 Utilize o comando USER antes.'
+		else:
+			mensagem = '500 Sequência errada de comandos.'
+		self.msg(mensagem)
 
 	def PASV(self, comando):
 		if self.logged:
@@ -135,8 +153,7 @@ class ConexaoFTP():
 			self.msg('227 Entrando em modo passivo (%s,%u,%u).\n' %
 				(','.join(local_ip.split('.')), porta_dados>>8&0xFF, porta_dados&0xFF))
 		else:
-			# Usuário deve estar logado! Enviar mensagem de erro.
-			pass
+			self.msg('530 Realize o login antes (comandos USER e PASS).')
 
 	def toListItem(self, fn): # Copiado da Internet.
 		st = os.stat(fn)
@@ -184,18 +201,21 @@ class ConexaoFTP():
 		return True
 
 	def CWD(self, comando):
-		pathname = extrai_parametro(comando)
-		if pathname:
-			if pathname == '/': # Alterar para o diretório raiz.
-				self.cwd = self.basewd
-				mensagem = '250 Comando "%s" OK.' % comando
-			else:
-				if self.atualiza_caminho(pathname):
+		if self.logged:
+			pathname = extrai_parametro(comando)
+			if pathname:
+				if pathname == '/': # Alterar para o diretório raiz.
+					self.cwd = self.basewd
 					mensagem = '250 Comando "%s" OK.' % comando
 				else:
-					mensagem = '550 Diretório "%s" não localizado.' % pathname
+					if self.atualiza_caminho(pathname):
+						mensagem = '250 Comando "%s" OK.' % comando
+					else:
+						mensagem = '550 Diretório "%s" não localizado.' % pathname
+			else:
+				mensagem = '501 Parâmetro inválido. Sintaxe: CWD <pathname>'
 		else:
-			mensagem = '501 Parâmetro inválido. Sintaxe: CWD <pathname>'
+			mensagem = '530 Realize o login antes (comandos USER e PASS).'
 		self.msg(mensagem)
 
 	def caminho_relativo(self, caminho, raiz):
@@ -207,7 +227,11 @@ class ConexaoFTP():
 		return cwd
 
 	def PWD(self, comando):
-		self.msg('257 \"%s\"' % self.caminho_relativo(self.cwd, self.basewd))
+		if self.logged:
+			mensagem = '257 Diretório corrente: "%s"' % self.caminho_relativo(self.cwd, self.basewd)
+		else:
+			mensagem = '530 Realize o login antes (comandos USER e PASS).'
+		self.msg(mensagem)
 
 	def MKD(self, comando):
 		if self.logged:
@@ -282,20 +306,18 @@ class ConexaoFTP():
 					caminho = '/'
 				else:
 					caminho = pathname[:pos]
-				print 'CAMINHO: [' + caminho + ']'
 				nome_arq = pathname[(pos + 1):]
-				print 'NOME_ARQ: [' + nome_arq + ']'
 				salva_cwd = self.cwd
 				if self.atualiza_caminho(caminho):
-					print 'CAMINHO DO ARQUIVO EXISTE'
 					caminho = os.path.join(self.cwd, nome_arq)
-					print 'CAMINHO:', caminho
 					if os.path.isfile(caminho):
 						os.remove(caminho)
 						mensagem = '250 Arquivo deletado.\r\n'
 					else:
 						mensagem = '550 Arquivo "%s" não localizado.' % nome_arq
 					self.cwd = salva_cwd
+				else:
+					mensagem = '550 Arquivo "%s" não localizado.' % nome_arq
 			else:
 				mensagem = '501 Parâmetro inválido. Sintaxe: DELE <pathname>'
 		else:
@@ -314,12 +336,9 @@ class ConexaoFTP():
 						caminho = '/'
 					else:
 						caminho = pathname[:pos]
-					print 'CAMINHO: [' + caminho + ']'
 					nome_arq = pathname[(pos + 1):]
-					print 'NOME_ARQ: [' + nome_arq + ']'
 					salva_cwd = self.cwd
 					if self.atualiza_caminho(caminho):
-						print 'CAMINHO DO ARQUIVO EXISTE'
 						if os.path.isfile(os.path.join(self.cwd, nome_arq)):
 							arquivo = open(os.path.join(self.cwd, nome_arq), 'r')
 							print 'Downloading:', arquivo
@@ -335,6 +354,8 @@ class ConexaoFTP():
 						else:
 							mensagem = '550 Arquivo "%s" não localizado.' % os.path.join(self.cwd, nome_arq)
 						self.cwd = salva_cwd
+					else:
+						mensagem = '550 Caminho do arquivo ("%s") não localizado.' % caminho
 				else:
 					mensagem = '501 Parâmetro inválido. Sintaxe: RETR <pathname>'
 			else:
@@ -355,12 +376,9 @@ class ConexaoFTP():
 						caminho = '/'
 					else:
 						caminho = pathname[:pos]
-					print 'CAMINHO: [' + caminho + ']'
 					nome_arq = pathname[(pos + 1):]
-					print 'NOME_ARQ: [' + nome_arq + ']'
 					salva_cwd = self.cwd
 					if self.atualiza_caminho(caminho):
-						print 'CAMINHO DO ARQUIVO EXISTE'
 						if os.path.isdir(self.cwd):
 							arquivo = open(os.path.join(self.cwd, nome_arq), 'w')
 							print 'Uploading:', arquivo
@@ -376,6 +394,8 @@ class ConexaoFTP():
 						else:
 							mensagem = '550 Diretório "%s" não localizado.' % self.cwd
 						self.cwd = salva_cwd
+					else:
+						mensagem = '550 Diretório "%s" não localizado.' % caminho
 				else:
 					mensagem = '501 Parâmetro inválido. Sintaxe: STOR <pathname>'
 			else:
@@ -388,7 +408,22 @@ class ConexaoFTP():
 		self.msg('221 Adeus.')
 		self.encerra()
 
+def configuracoes_iniciais():
+	global dicionario_usuarios_e_senhas
+	dicionario_usuarios_e_senhas = acesso.ler_usuarios_e_senhas()
+	global chave_publica
+	chave_publica = acesso.recuperar_chave_publica()
+	if not os.path.isdir(diretorio_raiz):
+		try:
+			os.mkdir(diretorio_raiz)
+			print 'Diretório raiz (./raiz) não existia e foi criado.'
+		except Exception, e:
+			print 'ERRO: Não foi possível criar o diretório raiz (./raiz).'
+	else:
+		print 'Diretório raiz (./raiz) já existe.'
+
 def main():
+	configuracoes_iniciais()
 	sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 	sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 	print 'IP: %s, porta: %u' % (local_ip, local_port)
