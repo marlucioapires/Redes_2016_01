@@ -243,39 +243,38 @@ class ConexaoFTP():
 			else:
 				mensagem = '550 Falha ao criar diretório "%s"' % pathname
 		else:
-			# Parâmetro inválido. Enviar mensagem de erro.
 			mensagem = '501 Parâmetro inválido. Sintaxe: MKD <pathname>'
 		self.msg(mensagem)
 
 	def DELE(self, comando):
-		'''pathname = extrai_parametro(comando)
-		if pathname and pathname[-1] != '/':
-			if pathname[0] == '/':
-				diretorio = os.path.abspath(os.path.join(self.basewd, pathname[1:]))
+		if self.logged:
+			pathname = extrai_parametro(comando)
+			if pathname and pathname != '/' and pathname[-1] != '/':
+				pos = pathname.rfind('/')
+				if pos == -1:
+					caminho = ' '
+				elif pos == 0:
+					caminho = '/'
+				else:
+					caminho = pathname[:pos]
+				print 'CAMINHO: [' + caminho + ']'
+				nome_arq = pathname[(pos + 1):]
+				print 'NOME_ARQ: [' + nome_arq + ']'
+				salva_cwd = self.cwd
+				if self.atualiza_caminho(caminho):
+					print 'CAMINHO DO ARQUIVO EXISTE'
+					caminho = os.path.join(self.cwd, nome_arq)
+					print 'CAMINHO:', caminho
+					if os.path.isfile(caminho):
+						os.remove(caminho)
+						mensagem = '250 Arquivo deletado.\r\n'
+					else:
+						mensagem = '550 Arquivo "%s" não localizado.' % nome_arq
+				self.cwd = salva_cwd
 			else:
-				diretorio = os.path.abspath(os.path.join(self.cwd, pathname))
-			pos = diretorio.rfind('/')
-			caminho = diretorio[:pos]
-			#if pos != (len(diretorio) - 1):
-			nome_arq = diretorio[(pos + 1):]
-			#if os.path.isdir(caminho): # Verifica se é um caminho válido.
-				# A seguir, verifica-se se está acessando diretório acima do raiz.
-			if caminho.find(self.basewd) != 0:
-				caminho = self.basewd
-			print 'CAMINHO:', caminho
-			print 'RAIZ:', self.basewd
-			diretorio = os.path.join(caminho, nome_arq)
-			try:			
-				os.remove(diretorio)
-				mensagem = '250 Arquivo removido com sucesso.'
-			except Exception, e:
-				mensagem = '550 Falha ao remover arquivo \'%s\'' % diretorio
-			#else:
-			#	mensagem = '550 Falha ao remover arquivo \'%s\'' % diretorio
+				mensagem = '501 Parâmetro inválido. Sintaxe: DELE <pathname>'
 		else:
-			# Parâmetro inválido. Enviar mensagem de erro.
-			mensagem = '501 Parâmetro inválido. Sintaxe: DELE <pathname>'''
-		mensagem = '502 Comando DELE não implementado.'
+			mensagem = '530 Realize o login antes (comandos USER e PASS).'
 		self.msg(mensagem)
 
 	def RETR(self, comando):
