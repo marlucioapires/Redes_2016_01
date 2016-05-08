@@ -47,8 +47,11 @@ def ler_usuarios_e_senhas():
 		partes = linha.split('=')
 		if len(partes) > 1:
 			dicionario[(partes[0])] = ''.join(partes[1:]).strip()
+			print partes[0]
+			print ''.join(partes[1:]).strip()
 		linha = arquivo.readline()
 	arquivo.close()
+	print 'TAMANHO DICIONARIO:', len(dicionario)
 	return dicionario
 
 def gravar_usuario_e_senha(user, senha):

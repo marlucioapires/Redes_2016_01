@@ -4,15 +4,14 @@ import acesso
 import os
 import shutil
 import socket
+import threading
 import time
 
-allow_delete = False
 local_ip = socket.gethostbyname(socket.gethostname())
 local_port = 8888
 diretorio_raiz = os.path.abspath('./raiz')
 print diretorio_raiz
 EOL = '\n'
-dicionario_usuarios_e_senhas = {}
 chave_publica = None
 
 def extrai_parametro(comando):
@@ -22,8 +21,8 @@ def extrai_parametro(comando):
 		parametro = comando[pos:].strip()
 	return parametro
 
-class ConexaoFTP():
-	def __init__(self, (conn, addr), timeout = 100000):
+class ServidorFTPThread(threading.Thread):
+	def __init__(self, (conn, addr), timeout = 100):
 		self.conn = conn
 		self.conn.settimeout(timeout)
 		self.timeout = timeout
@@ -36,7 +35,30 @@ class ConexaoFTP():
 		self.conn_dados = None
 		self.esta_ativo = True
 		self.user = None
+		self.dicionario_usuarios_e_senhas = {}
 		print 'Conectado ao cliente (IP): %s\n' % str(addr)
+		threading.Thread.__init__(self)
+
+	def run(self):
+		self.msg('220 Bem-vindo ao servidor FTP!')
+		while self.ativo():
+			cmd = self.conn.recv(1024).strip()
+			if not cmd: break
+			else:
+				print 'Recebido:', cmd
+				try:
+					func = getattr(self, cmd.split(' ')[0].upper())
+					func(cmd)
+				except Exception,e:
+					print 'ERROR:', e
+					#traceback.print_exc()
+					self.conn.send('500 Sorry.\r\n')
+
+	def msg(self, mensagem):
+		self.conn.send(str(mensagem) + '\n')
+
+	def enviar_dados(self, dados):
+		self.conn_dados.send(str(dados) + '\n')
 
 	def ativo(self):
 		return self.esta_ativo
@@ -46,43 +68,65 @@ class ConexaoFTP():
 		self.conn.close()
 		self.esta_ativo = False
 
-	def le_comando(self):
-		reply = ''
-		while True:
-			try:
-				reply += self.conn.recv(1024)
-				if reply[-1] == EOL:
-					break
-			except socket.timeout, e:
-				err = e.args[0]
-				# this next if/else is a bit redundant, but illustrates how the
-				# timeout exception is setup
-				if err == 'timed out':
-					print 'Tempo de espera (' + str(self.timeout) + ' segundos) do socket expirado!'
-					self.msg('421 Tempo de espera (' + str(self.timeout) + ' segundos) expirado. Conexão de controle encerrada.')
-					break
-				else:
-					print e
-					break
-			except socket.error, e:
-				# Something else happened, handle error, exit, etc.
-				print e
-				break
-		return reply.strip()
-
-	def msg(self, mensagem):
-		self.conn.send(str(mensagem) + '\r\n')
-
-	def enviar_dados(self, dados):
-		self.conn_dados.send(str(dados) + '\r\n')	
-
 	def processa_comando(self, comando):
 		try:
 			funcao = getattr(self, comando.split(' ')[0].upper())
 			funcao(comando)
 		except Exception, e:
 			print 'ERRO:', e
-			self.msg('500 Comando não reconhecido.')
+			self.msg('500 Comando "%s" não reconhecido.' % comando)
+
+	def USER(self, comando):
+		if not self.logged:
+			lista = comando.split(' ')
+			if len(lista) > 1:
+				self.user = lista[1]
+				if self.user == 'anonymous':
+					mensagem = '331 Usuário "anonymous" OK. Informe o seu e-mail completo como a sua senha.'
+				else:
+					mensagem = '331 Informe a senha para o usuário "%s".' % self.user
+			else:
+				mensagem = '501 Parâmetro inválido. Sintaxe: USER <username>'
+		else:
+			mensagem = '500 Sequência errada de comandos.'
+		self.msg(mensagem)
+
+	def atualizar_dicionario_de_senhas(self):
+		self.dicionario_usuarios_e_senhas = acesso.ler_usuarios_e_senhas()
+
+	def PASS(self, comando):
+		if not self.logged:
+			if self.user:
+				lista = comando.split(' ')
+				if len(lista) > 1:
+					senha = lista[1]
+					if self.user == 'anonymous':
+						self.logged = True
+					else:
+						self.atualizar_dicionario_de_senhas()
+						if self.dicionario_usuarios_e_senhas.has_key(self.user):
+							if acesso.criptografar_senha(chave_publica, senha) == self.dicionario_usuarios_e_senhas[self.user]:
+								self.logged = True
+					if self.logged:
+						mensagem = '230 Senha OK. Usuário "%s" logado.' % self.user
+					else:
+						mensagem = '530 Usuário e/ou senha incorretos.'
+				else:
+					mensagem = '501 Parâmetro inválido. Sintaxe: PASS <password>'
+			else:
+				mensagem = '503 Utilize o comando USER antes.'
+		else:
+			mensagem = '500 Sequência errada de comandos.'
+		self.msg(mensagem)
+
+	def NOOP(self, cmd):
+		self.msg('200 OK.')
+
+	def envia_msg_comando_nao_implementado(self):
+		self.msg('202 Comando não implementado, supérfluo a este servidor FTP.')
+
+	def TYPE(self,cmd):
+		self.envia_msg_comando_nao_implementado()
 
 	def abrir_conexao_de_dados(self):
 		if self.pasv_mode:
@@ -104,47 +148,9 @@ class ConexaoFTP():
 				self.conn_dados.close() # Fecha a conexão de dados.
 				self.conn_dados = None
 			if self.sock_dados:
-				self.sock_dados.close() # Fecha a conexão de dados.
+				self.sock_dados.close() # Libera o socket de dados.
 				self.sock_dados = None
 			self.pasv_mode = False
-
-	def USER(self, comando):
-		if not self.logged:
-			lista = comando.split(' ')
-			if len(lista) > 1:
-				self.user = lista[1]
-				if self.user == 'anonymous':
-					mensagem = '331 Usuário "anonymous" OK. Informe o seu e-mail completo como a sua senha.'
-				else:
-					mensagem = '331 Informe a senha para o usuário "%s".' % self.user
-			else:
-				mensagem = '501 Parâmetro inválido. Sintaxe: USER <username>'
-		else:
-			mensagem = '500 Sequência errada de comandos.'
-		self.msg(mensagem)
-
-	def PASS(self, comando):
-		if not self.logged:
-			if self.user:
-				lista = comando.split(' ')
-				if len(lista) > 1:
-					senha = lista[1]
-					if self.user == 'anonymous':
-						self.logged = True
-					elif dicionario_usuarios_e_senhas.has_key(self.user):
-						if acesso.criptografar_senha(chave_publica, senha) == dicionario_usuarios_e_senhas[self.user]:
-							self.logged = True
-					if self.logged:
-						mensagem = '230 Senha OK. Usuário "%s" logado.' % self.user
-					else:
-						mensagem = '530 Usuário e/ou senha incorretos.'
-				else:
-					mensagem = '501 Parâmetro inválido. Sintaxe: PASS <password>'
-			else:
-				mensagem = '503 Utilize o comando USER antes.'
-		else:
-			mensagem = '500 Sequência errada de comandos.'
-		self.msg(mensagem)
 
 	def PASV(self, comando):
 		if self.logged:
@@ -408,9 +414,25 @@ class ConexaoFTP():
 		self.msg('221 Adeus.')
 		self.encerra()
 
+class ServidorFTP(threading.Thread):
+	def __init__(self):
+		self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+		self.sock.bind(('', local_port))
+		threading.Thread.__init__(self)
+
+	def run(self):
+		self.sock.listen(1)
+		while True:
+			print 'Aguardando conexão...'
+			th = ServidorFTPThread(self.sock.accept())
+			th.daemon = True
+			th.start()
+
+	def encerra(self):
+		self.sock.close()
+
 def configuracoes_iniciais():
-	global dicionario_usuarios_e_senhas
-	dicionario_usuarios_e_senhas = acesso.ler_usuarios_e_senhas()
 	global chave_publica
 	chave_publica = acesso.recuperar_chave_publica()
 	if not os.path.isdir(diretorio_raiz):
@@ -422,24 +444,11 @@ def configuracoes_iniciais():
 	else:
 		print 'Diretório raiz (./raiz) já existe.'
 
-def main():
+if __name__ == '__main__':
 	configuracoes_iniciais()
-	sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-	sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-	print 'IP: %s, porta: %u' % (local_ip, local_port)
-	sock.bind(('', local_port))
-	sock.listen(1)
-	while True:
-		print 'Aguardando conexão...'
-		ftp = ConexaoFTP(sock.accept())
-		ftp.msg('220 Bem-vindo ao servidor FTP!')
-		while ftp.ativo():
-			comando = ftp.le_comando()
-			if not comando:
-				ftp.encerra()
-			else:
-				print 'Recebido:', comando
-				ftp.processa_comando(comando)
-
-if __name__=='__main__':
-	main()
+	ftp = ServidorFTP()
+	ftp.daemon = True
+	ftp.start()
+	print 'IP Local', local_ip, ', PORTA:', local_port
+	raw_input('ENTER para finalizar...\n')
+	ftp.encerra()
